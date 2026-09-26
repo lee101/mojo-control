@@ -1,6 +1,5 @@
 """Dense kernels for state-space and transfer-function evaluation."""
 
-from std.algorithm import sync_parallelize
 from std.sys import simd_width_of
 
 comptime FPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
@@ -94,24 +93,10 @@ def mctl_tf_eval(
     else:
         var chunks = (count + CHUNK_SIZE - 1) // CHUNK_SIZE
 
-        @parameter
-        def evaluate_chunk(chunk: Int):
+        for chunk in range(chunks):
             var start = chunk * CHUNK_SIZE
             var end = min(start + CHUNK_SIZE, count)
-            tf_eval_range(
-                fp(num_addr),
-                fp(den_addr),
-                nnum,
-                nden,
-                fp(xr_addr),
-                fp(xi_addr),
-                fp(real_addr),
-                fp(imag_addr),
-                start,
-                end,
-            )
-
-        sync_parallelize[evaluate_chunk](chunks)
+            tf_eval_range(num, den, nnum, nden, xr, xi, real, imag, start, end)
 
 
 @export("mctl_ss_eval")
