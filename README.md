@@ -13,8 +13,9 @@ state recurrences.
 
 ## Install
 
-The checked-in Pixi environment pins the tested Mojo nightly and installs
-Python, NumPy, SciPy, pytest, and `control==0.10.2`:
+The checked-in Pixi environment pins the tested Mojo nightly together with the
+matching `max` package, and installs Python, NumPy, SciPy, pytest, and
+`control==0.10.2`:
 
 ```bash
 pixi install
@@ -89,8 +90,8 @@ instead of silently taking a different numerical path.
 
 ## Benchmarks
 
-Measured on 2026-07-29 on an Intel Xeon E5-2697 v4 at 2.30GHz, Linux
-6.8.0-136-generic. These are best-of-four wall-clock measurements of each
+Measured on 2026-09-27 on an Intel Xeon E5-2697 v4 at 2.30GHz, Linux
+6.8.0-142-generic. These are best-of-four wall-clock measurements of each
 library's public Python API after loading the shared library. The benchmark
 first asserts numerical agreement and is run through the repository's
 machine-wide benchmark lock:
@@ -99,20 +100,57 @@ machine-wide benchmark lock:
 pixi run bench
 ```
 
-| Case | mojo-control | control 0.10.2 | Speedup |
-|---|---:|---:|---:|
-| TF frequency response, order 32, 500k points | 12.84 ms | 199.38 ms | 15.52x faster |
-| SS frequency response, 12 states, 2x2, 20k points | 48.79 ms | 385.44 ms | 7.90x faster |
-| Continuous forced response, 4 states, 100k samples | 6.22 ms | 808.81 ms | 129.99x faster |
-| Discrete forced response, 8 states, 2x2, 200k samples | 39.14 ms | 1792.06 ms | 45.79x faster |
+| Case | mojo-control | control 0.10.2 | Speedup | before |
+|---|---:|---:|---:|---:|
+| TF frequency response, order 32, 500k points | 8.69 ms | 145.09 ms | 16.70x faster | 25.11 ms |
+| SS frequency response, 12 states, 2x2, 20k points | 8.40 ms | 327.73 ms | 39.04x faster | 44.95 ms |
+| Continuous forced response, 4 states, 100k samples | 3.02 ms | 645.55 ms | 213.66x faster | 3.77 ms |
+| Discrete forced response, 8 states, 2x2, 200k samples | 15.19 ms | 1626.24 ms | 107.07x faster | 23.07 ms |
+
+`before` is this same benchmark against the previous revision of the port,
+re-measured on this machine under the same lock. Across eight runs of the
+optimized build the mojo-control column ranged over 8.4-14.0 ms, 7.8-9.7 ms,
+2.95-5.10 ms and 14.0-15.5 ms. The two threaded frequency cases vary most
+because the `parallelize` launch alone costs about 5 ms of wall clock per call
+on this toolchain and the host is shared; the single 5.10 ms continuous
+response reading is an outlier against the other seven. Results are machine-
+and problem-dependent; rerun the benchmark for the systems that matter to
+you.
 
 The largest gains come from moving per-frequency dense solves and per-sample
-state updates out of Python. Transfer-function evaluation also vectorizes
-complex Horner steps across frequency points and uses multiple CPU workers
-only for large batches. Results are machine- and problem-dependent; rerun the
-benchmark for the systems that matter to you.
+state updates out of Python. On top of that, the frequency kernels are now
+split across CPU workers, the state-space assembly and elimination are
+SIMD-vectorized, the recurrence drops its per-step state copy, and the
+complex outputs are interleaved without a temporary.
 
-There is no GPU path.
+### Parallelism
+
+Both frequency kernels use `max.algorithm.parallelize` with an explicit worker
+count, on independent chunks of the frequency grid, above a work threshold
+(12M coefficient-products for transfer functions, 6M for state-space solves).
+Each chunk gets its own scratch slab so the workers never share the matrix.
+Below the thresholds the same kernels run serially, because below roughly
+5.5 ms of serial work the thread launch costs more than it saves. The
+simulation kernel is inherently sequential in time and is not parallelized.
+
+### GPU
+
+There is no GPU path, and it is not because the host API is missing. On the
+pinned toolchain (`mojo 1.2.0.dev2026092605`, `max 26.7.0.dev2026092605`)
+`max.gpu.host.DeviceContext` with `enqueue_create_buffer`, `enqueue_copy`,
+`enqueue_function` and `synchronize` compiles, and `max.gpu.global_idx`,
+`thread_idx`, `block_idx` and `block_dim` compile. What is not reachable is
+any way to *declare* a device function: a plain `def` is not `DevicePassable`,
+`max.gpu` exports no kernel decorator, and `max.gpu.host.compile` rejects
+every decoration form. `DeviceFunction` is parameterized by that missing
+function type. So the launch path is present and the entry point is not.
+
+The state-space frequency kernel is otherwise a good GPU candidate - about 57
+flops per byte at 12 states and 2x2, well above the 2 flops per byte
+break-even - so this is worth revisiting on a toolchain that exposes the
+device-function declaration. The transfer-function kernel is roughly 5 flops
+per byte and the time-domain recurrence is far below that, so neither would
+benefit much from a GPU even once one can be built.
 
 ## How it works
 
@@ -124,16 +162,30 @@ and complex arrays cross as separate real and imaginary buffers. The Mojo side
 does not allocate or retain Python-owned memory.
 
 Transfer functions use batched complex Horner evaluation with hardware-width
-float64 SIMD, an explicit scalar tail, and thresholded parallel chunks above
-131,072 points. Continuous and discrete frequency grids are passed as
-contiguous real and imaginary NumPy buffers without an intermediate complex
-grid, and magnitude and phase arrays are materialized only when requested.
+float64 SIMD and an explicit scalar tail. Continuous and discrete frequency
+grids are passed as contiguous real and imaginary NumPy buffers without an
+intermediate complex grid, and magnitude and phase arrays are materialized
+only when requested.
+
 State-space frequency response forms `x I - A` for each point and performs a
 partial-pivoted complex elimination while solving every input column together.
+Assembling the matrix, negating `A` into it, and the row-update inner loop are
+SIMD-vectorized; the pivot search and the back substitution stay scalar
+because they are strided. The kernel writes its results in `(outputs, inputs,
+points)` order so the Python layer can fill the complex output buffer directly
+instead of transposing and copying it.
+
 For continuous time response, SciPy computes one exact augmented matrix
 exponential for linear input interpolation; Mojo then performs the full state
 recurrence and output projection. Discrete systems enter the same recurrence
-directly.
+directly. The recurrence keeps its two state buffers and swaps pointers
+instead of copying, unrolls four state rows at a time so the independent dot
+products overlap instead of serializing on one accumulator chain, and skips
+the second input matrix entirely for discrete systems, where it is zero by
+construction.
+
+The library needs the `max` package alongside `mojo` in `pixi.toml`; it ships
+in lockstep and provides `max.algorithm.parallelize`.
 
 ## Development
 

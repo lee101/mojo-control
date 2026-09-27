@@ -95,7 +95,7 @@ def test_discrete_transfer_function_frequency_response():
     )
 
 
-@pytest.mark.parametrize("count", [4097, 131_073])
+@pytest.mark.parametrize("count", [4097, 131_073, 200_003])
 def test_transfer_function_simd_tail_and_parallel_threshold(count):
     ours = mc.tf([0.7, -1.2, 0.3], [1.0, 0.4, 2.0, -0.1])
     theirs = ct.tf([0.7, -1.2, 0.3], [1.0, 0.4, 2.0, -0.1])
@@ -106,6 +106,83 @@ def test_transfer_function_simd_tail_and_parallel_threshold(count):
         rtol=1e-12,
         atol=1e-12,
     )
+
+
+@pytest.mark.parametrize("count", [199_999, 200_003, 262_147])
+def test_transfer_function_parallel_chunks(count):
+    rng = np.random.default_rng(11)
+    num = rng.normal(size=33)
+    den = np.r_[1.0, rng.normal(scale=0.05, size=32)]
+    ours = mc.tf(num, den)
+    theirs = ct.tf(num, den)
+    omega = np.logspace(-3, 3, count)
+    assert np.allclose(
+        mc.frequency_response(ours, omega).complex,
+        ct.frequency_response(theirs, omega).complex,
+        rtol=1e-10,
+        atol=1e-12,
+    )
+
+
+def _numpy_frequency_response(model, omega):
+    eye = np.eye(model.A.shape[0])
+    points = 1j * omega
+    return np.array(
+        [model.C @ np.linalg.solve(points[i] * eye - model.A, model.B) + model.D
+         for i in range(points.size)]
+    ).transpose(1, 2, 0)
+
+
+@pytest.mark.parametrize("count", [4001, 4003, 20011])
+def test_state_space_parallel_chunks_and_simd_tail(count):
+    rng = np.random.default_rng(3)
+    n = 12
+    A = rng.normal(scale=0.08, size=(n, n)) - np.diag(np.linspace(1.0, 3.0, n))
+    B = rng.normal(size=(n, 2))
+    C = rng.normal(size=(2, n))
+    D = rng.normal(scale=0.01, size=(2, 2))
+    model = mc.ss(A, B, C, D)
+    omega = np.logspace(-3, 3, count)
+    assert np.allclose(
+        mc.frequency_response(model, omega, squeeze=False).frdata,
+        _numpy_frequency_response(model, omega),
+        rtol=1e-9,
+        atol=1e-9,
+    )
+
+
+def test_state_space_singular_frequency_point():
+    A = np.zeros((2, 2))
+    B = np.array([[1.0], [0.0]])
+    C = np.array([[1.0, 1.0]])
+    D = np.array([[0.0]])
+    model = mc.ss(A, B, C, D)
+    with pytest.raises(np.linalg.LinAlgError):
+        mc.frequency_response(model, np.array([0.0, 1.0, 2.0]))
+
+
+@pytest.mark.parametrize("n", [1, 3, 5])
+def test_forced_response_state_count_remainders(n):
+    rng = np.random.default_rng(5)
+    A = rng.normal(scale=0.2, size=(n, n)) - np.diag(np.linspace(1.0, 2.0, n))
+    B = rng.normal(size=(n, 2))
+    C = rng.normal(size=(2, n))
+    D = rng.normal(scale=0.01, size=(2, 2))
+    T = np.linspace(0.0, 3.0, 257)
+    U = np.vstack([np.sin(0.7 * T), np.cos(0.4 * T)])
+    for ours, theirs in ((mc.ss(A, B, C, D), ct.ss(A, B, C, D)),):
+        actual = mc.forced_response(ours, T, U, return_states=True, squeeze=False)
+        expected = ct.forced_response(theirs, T, U, return_states=True, squeeze=False)
+        assert np.allclose(actual.outputs, expected.outputs, atol=1e-12)
+        assert np.allclose(actual.states, expected.states, atol=1e-12)
+        discrete = mc.ss(A, B, C, D, 3.0 / 256.0)
+        theirs_d = ct.ss(A, B, C, D, 3.0 / 256.0)
+        actual_d = mc.forced_response(discrete, T, U, return_states=True, squeeze=False)
+        expected_d = ct.forced_response(
+            theirs_d, T, U, return_states=True, squeeze=False
+        )
+        assert np.allclose(actual_d.outputs, expected_d.outputs, atol=1e-11)
+        assert np.allclose(actual_d.states, expected_d.states, atol=1e-11)
 
 
 @pytest.mark.parametrize(

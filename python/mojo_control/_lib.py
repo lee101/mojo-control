@@ -16,10 +16,21 @@ LIB_PATH = os.environ.get(
 I = ctypes.c_int64
 
 _SIGNATURES = {
+    "mctl_chunk_count": ([], ctypes.c_int64),
     "mctl_tf_eval": ([I] * 9, None),
-    "mctl_ss_eval": ([I] * 17, None),
-    "mctl_ss_simulate": ([I] * 14, None),
+    "mctl_ss_eval": ([I] * 14, None),
+    "mctl_ss_simulate": ([I] * 15, None),
 }
+
+_chunks: int | None = None
+
+
+def scratch_chunks() -> int:
+    global _chunks
+    if _chunks is None:
+        _chunks = int(lib().mctl_chunk_count())
+    return _chunks
+
 
 _library: ctypes.CDLL | None = None
 

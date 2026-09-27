@@ -10,7 +10,7 @@ from typing import Iterator
 import numpy as np
 from scipy import linalg, signal
 
-from ._lib import addr, f64, lib
+from ._lib import addr, f64, lib, scratch_chunks
 
 
 def _dt(value):
@@ -155,7 +155,10 @@ class TransferFunction:
             addr(imag),
             xr.size,
         )
-        return (real + 1j * imag).reshape(shape)
+        result = np.empty(xr.size, dtype=np.complex128)
+        result.real = real
+        result.imag = imag
+        return result.reshape(shape)
 
     def __call__(self, x, squeeze=None):
         points = np.asarray(x, dtype=np.complex128)
@@ -293,10 +296,51 @@ class StateSpace:
     def issiso(self):
         return self.ninputs == self.noutputs == 1
 
+    def _evaluate_parts(self, xr, xi):
+        xr = f64(xr).ravel()
+        xi = f64(xi).ravel()
+        if xr.size != xi.size:
+            raise ValueError("real and imaginary point buffers must have equal length")
+        count = xr.size
+        if count == 0:
+            return np.empty((self.noutputs, self.ninputs, 0), dtype=np.complex128)
+        n, m, p = self.nstates, self.ninputs, self.noutputs
+        real = np.empty((p, m, count))
+        imag = np.empty_like(real)
+        stride = 2 * n * n + 2 * n * m
+        scratch = np.empty(scratch_chunks() * stride)
+        status = np.zeros(count, dtype=np.int64)
+        lib().mctl_ss_eval(
+            addr(self.A),
+            addr(self.B),
+            addr(self.C),
+            addr(self.D),
+            n,
+            m,
+            p,
+            addr(xr),
+            addr(xi),
+            addr(real),
+            addr(imag),
+            addr(scratch),
+            addr(status),
+            count,
+        )
+        result = np.empty((p, m, count), dtype=np.complex128)
+        result.real = real
+        result.imag = imag
+        if np.any(status):
+            eye = np.eye(n)
+            for index in np.flatnonzero(status):
+                point = complex(xr[index], xi[index])
+                result[..., index] = self.C @ np.linalg.solve(
+                    point * eye - self.A, self.B
+                ) + self.D
+        return result
+
     def __call__(self, x, squeeze=None):
         points = np.asarray(x, dtype=np.complex128)
-        flat = np.ascontiguousarray(points.ravel())
-        if flat.size == 0:
+        if points.size == 0:
             result = np.empty(
                 (self.noutputs, self.ninputs) + points.shape, dtype=np.complex128
             )
@@ -310,41 +354,9 @@ class StateSpace:
                 return result
             result = np.squeeze(result)
             return result.item() if result.ndim == 0 else result
-        xr, xi = f64(flat.real), f64(flat.imag)
-        real = np.empty((flat.size, self.noutputs, self.ninputs))
-        imag = np.empty_like(real)
-        mat_r = np.empty(max(1, self.nstates * self.nstates))
-        mat_i = np.empty_like(mat_r)
-        rhs_r = np.empty(max(1, self.nstates * self.ninputs))
-        rhs_i = np.empty_like(rhs_r)
-        status = np.zeros(flat.size, dtype=np.int64)
-        lib().mctl_ss_eval(
-            addr(self.A),
-            addr(self.B),
-            addr(self.C),
-            addr(self.D),
-            self.nstates,
-            self.ninputs,
-            self.noutputs,
-            addr(xr),
-            addr(xi),
-            addr(real),
-            addr(imag),
-            addr(mat_r),
-            addr(mat_i),
-            addr(rhs_r),
-            addr(rhs_i),
-            addr(status),
-            flat.size,
-        )
-        result = (real + 1j * imag).transpose(1, 2, 0)
-        if np.any(status):
-            for index in np.flatnonzero(status):
-                matrix = flat[index] * np.eye(self.nstates) - self.A
-                result[:, :, index] = self.C @ np.linalg.solve(matrix, self.B) + self.D
-        result = result.reshape(
-            (self.noutputs, self.ninputs) + points.shape
-        )
+        flat = np.ascontiguousarray(points.ravel())
+        result = self._evaluate_parts(flat.real, flat.imag)
+        result = result.reshape((self.noutputs, self.ninputs) + points.shape)
         if squeeze is False:
             return result
         result = np.squeeze(result)
@@ -565,12 +577,12 @@ def frequency_response(
             xr, xi = np.zeros_like(values), values
         response = model._evaluate_parts(xr, xi, (1, 1, values.size))
     else:
-        points = (
-            np.exp(1j * values * float(model.dt if model.dt is not True else 1.0))
-            if model.dt not in (0, None)
-            else 1j * values
-        )
-        response = model(points, squeeze=False)
+        if model.dt not in (0, None):
+            angles = values * float(model.dt if model.dt is not True else 1.0)
+            xr, xi = np.cos(angles), np.sin(angles)
+        else:
+            xr, xi = np.zeros_like(values), values
+        response = model._evaluate_parts(xr, xi)
     return FrequencyResponseData(response, values, squeeze=squeeze)
 
 
@@ -731,6 +743,7 @@ def forced_response(
         model.nstates,
         model.ninputs,
         model.noutputs,
+        1 if model.dt in (0, None) else 0,
     )
     outputs = y.T
     state_data = states.T
