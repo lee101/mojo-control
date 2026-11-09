@@ -90,11 +90,11 @@ instead of silently taking a different numerical path.
 
 ## Benchmarks
 
-Measured on 2026-09-27 on an Intel Xeon E5-2697 v4 at 2.30GHz, Linux
-6.8.0-142-generic. These are best-of-four wall-clock measurements of each
-library's public Python API after loading the shared library. The benchmark
-first asserts numerical agreement and is run through the repository's
-machine-wide benchmark lock:
+Measured on 2026-11-09 (verify session) on an Intel Xeon E5-2697 v4 at
+2.30GHz, Linux 6.8.0-147-generic. These are best-of-four wall-clock
+measurements of each library's public Python API after loading the shared
+library. The benchmark first asserts numerical agreement and is run through
+the repository's machine-wide benchmark lock:
 
 ```bash
 pixi run bench
@@ -102,20 +102,25 @@ pixi run bench
 
 | Case | mojo-control | control 0.10.2 | Speedup | before |
 |---|---:|---:|---:|---:|
-| TF frequency response, order 32, 500k points | 8.69 ms | 145.09 ms | 16.70x faster | 25.11 ms |
-| SS frequency response, 12 states, 2x2, 20k points | 8.40 ms | 327.73 ms | 39.04x faster | 44.95 ms |
-| Continuous forced response, 4 states, 100k samples | 3.02 ms | 645.55 ms | 213.66x faster | 3.77 ms |
-| Discrete forced response, 8 states, 2x2, 200k samples | 15.19 ms | 1626.24 ms | 107.07x faster | 23.07 ms |
+| TF frequency response, order 32, 500k points | 8.01 ms | 140.33 ms | 17.52x faster | 23.11 ms |
+| SS frequency response, 12 states, 2x2, 20k points | 7.60 ms | 312.27 ms | 41.11x faster | 45.76 ms |
+| Continuous forced response, 4 states, 100k samples | 3.02 ms | 672.24 ms | 222.74x faster | 3.87 ms |
+| Discrete forced response, 8 states, 2x2, 200k samples | 13.65 ms | 1653.98 ms | 121.17x faster | 24.29 ms |
 
 `before` is this same benchmark against the previous revision of the port,
-re-measured on this machine under the same lock. Across eight runs of the
-optimized build the mojo-control column ranged over 8.4-14.0 ms, 7.8-9.7 ms,
-2.95-5.10 ms and 14.0-15.5 ms. The two threaded frequency cases vary most
-because the `parallelize` launch alone costs about 5 ms of wall clock per call
-on this toolchain and the host is shared; the single 5.10 ms continuous
-response reading is an outlier against the other seven. Results are machine-
-and problem-dependent; rerun the benchmark for the systems that matter to
-you.
+re-measured on this machine under the same lock in the same verify session
+(old library built from revision 15d1e82 on the current toolchain; see
+`bench/verify.md`). Across eight runs of the optimized build the mojo-control
+column ranged over 8.4-14.0 ms, 7.8-9.7 ms, 2.95-5.10 ms and 14.0-15.5 ms on
+the original measurement machine; in this verify session across repeated
+`pixi run bench` invocations the mojo-control column varied over roughly
+7.4-11.5 ms, 7.5-11.4 ms, 2.9-5.1 ms and 13.3-16.8 ms, and the upstream column
+likewise varied by up to ~20% run to run. The two threaded frequency cases
+vary most because the `parallelize` launch alone costs about 5 ms of wall
+clock per call on this toolchain and the host is shared; the single 5.10 ms
+continuous response reading is an outlier against the other seven. Results
+are machine- and problem-dependent; rerun the benchmark for the systems
+that matter to you.
 
 The largest gains come from moving per-frequency dense solves and per-sample
 state updates out of Python. On top of that, the frequency kernels are now
