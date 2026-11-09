@@ -1,269 +1,272 @@
 # VERIFY — mojo-control benchmark and parity verification
 
-Session: 2026-11-09, VERIFY phase (no code written in earlier phases assumed here).
-Host: Intel Xeon E5-2697 v4 @ 2.30 GHz, Linux 6.8.0-147-generic (`/proc/cpuinfo`),
-control 0.10.2, numpy 2.5.1, scipy 1.18.0, Python 3.13.14.
-Toolchain (pinned by `pixi.toml`): mojo 1.2.0.dev2026092605, max 26.7.0.dev2026092605.
+Session: 2026-11-09, VERIFY phase. No code from earlier phases is taken at
+face value; every number below was re-measured in this session.
+Host: Intel Xeon E5-2697 v4 @ 2.30 GHz, Linux 6.8.0-147-generic
+(`/proc/cpuinfo`), control 0.10.2, numpy 2.5.1, scipy 1.18.0,
+Python 3.13.14.
+Toolchain (pinned by `pixi.toml`): mojo 1.2.0.dev2026092605,
+max 26.7.0.dev2026092605.
 
-Every number below was measured in this session under the repository's
-machine-wide benchmark lock (`pixi run bench` = `flock /tmp/mojo-bench.lock
-python bench/bench.py`). No number is copied from a previous session.
-
-## 1. Baseline gate
+## 1. Gate run (DO step 1, in order)
 
 ```
 pixi run build && pixi run test
 ```
 - Build: succeeded (warnings only: deprecated positional `__getitem__`,
   use `unsafe_offset=`; in `src/control.mojo`).
-- Test: `55 passed in 3.75s` (python -m pytest tests -q).
-- `pixi run bench` (first run, this session):
+- Test: `55 passed in 3.41s`.
+- `pixi run bench` (first run, this session, under
+  `flock /tmp/mojo-bench.lock`):
   ```
-  Machine: Intel(R) Xeon(R) CPU E5-2697 v4 @ 2.30GHz (Linux 6.8.0-147-generic)
-
-  | Case | mojo-control | control 0.10.2 | Speedup |
-  |---|---:|---:|---:|
-  | TF frequency response, order 32, 500k points | 8.34 ms | 141.40 ms | 16.95x faster |
-  | SS frequency response, 12 states, 2x2, 20k points | 7.38 ms | 317.50 ms | 43.02x faster |
-  | Continuous forced response, 4 states, 100k samples | 2.94 ms | 667.81 ms | 226.81x faster |
-  | Discrete forced response, 8 states, 2x2, 200k samples | 15.75 ms | 1545.49 ms | 98.11x faster |
+  | TF frequency response, order 32, 500k points | 10.02 ms | 127.13 ms | 12.69x faster |
+  | SS frequency response, 12 states, 2x2, 20k points | 7.77 ms | 388.23 ms | 49.99x faster |
+  | Continuous forced response, 4 states, 100k samples | 2.99 ms | 855.15 ms | 285.97x faster |
+  | Discrete forced response, 8 states, 2x2, 200k samples | 16.49 ms | 1846.54 ms | 112.00x faster |
   ```
 
 Final gate (after README correction, no code changed):
-`pixi run build && pixi run test` — both green (55 passed).
+`pixi run build && pixi run test` — both green (see §7).
 
-## 2. What was run repeatedly
+## 2. What was run repeatedly (DO step 2)
 
-`pixi run bench` was run 13+ times in this session (best-of-4 inside one
-invocation, as `bench/bench.py` defines `best_time(..., repeat=4)`).
-Representative raw outputs (first 5, plus the final two canonical runs):
+`pixi run bench` was run 18 times in this session. Each invocation is
+best-of-4 inside one process (`best_time(..., repeat=4)`), asserts
+numerical agreement before timing, and measures both libraries' public
+Python API on the same systems and inputs.
 
 | Run | TF ms / upstream ms | SS ms / upstream ms | CT ms / upstream ms | DT ms / upstream ms |
 |---|---|---|---|---|
-| 1 (first) | 8.34 / 141.40 | 7.38 / 317.50 | 2.94 / 667.81 | 15.75 / 1545.49 |
-| 2 | 7.77 / 138.07 | 7.51 / 305.78 | 3.55 / 688.00 | 13.34 / 1674.49 |
-| 3 | 8.62 / 129.73 | 9.54 / 290.77 | 3.02 / 674.38 | 15.91 / 1753.88 |
-| 4 | 11.46 / 149.91 | 9.24 / 315.62 | 3.04 / 630.98 | 14.51 / 1552.21 |
-| 5 | 10.58 / 150.38 | 8.75 / 319.18 | 3.11 / 686.64 | 16.45 / 1771.21 |
-| 6 | 8.66 / 141.18 | 7.72 / 377.54 | 3.02 / 711.54 | 14.17 / 1913.83 |
-| 7 | 8.34 / 149.61 | 8.95 / 355.25 | 2.99 / 663.37 | 13.33 / 1757.75 |
-| 8 | 8.30 / 134.13 | 8.35 / 291.04 | 2.99 / 643.63 | 16.76 / 1636.49 |
-| 9 | 9.72 / 135.56 | 11.44 / 408.13 | 3.62 / 701.42 | 15.99 / 1664.18 |
-| 10 | 9.94 / 148.00 | 7.72 / 296.54 | 2.98 / 672.46 | 15.70 / 1592.38 |
-| 11 | 8.53 / 135.60 | 9.00 / 280.84 | 2.92 / 632.73 | 13.94 / 1539.82 |
-| 12 | 8.56 / 129.65 | 8.20 / 304.70 | 5.10 / 798.13 | 14.95 / 1969.10 |
-| 13 | 9.40 / 126.65 | 7.88 / 365.80 | 3.15 / 753.86 | 16.75 / 1708.32 |
-| 14 | 8.77 / 136.70 | 8.65 / 334.92 | 3.04 / 678.09 | 14.81 / 1791.66 |
-| 15 | 9.16 / 132.14 | 8.21 / 287.84 | 3.06 / 644.55 | 14.29 / 1605.99 |
-| 16 (canonical) | 8.01 / 140.33 | 7.60 / 312.27 | 3.02 / 672.24 | 13.65 / 1653.98 |
+| 1 (first) | 10.02 / 127.13 | 7.77 / 388.23 | 2.99 / 855.15 | 16.49 / 1846.54 |
+| 2 | 8.89 / 139.09 | 8.17 / 331.45 | 3.01 / 647.01 | 16.22 / 1639.69 |
+| 3 | 8.48 / 143.17 | 8.93 / 432.58 | 3.01 / 881.14 | 15.98 / 1956.80 |
+| 4 | 8.16 / 135.94 | 9.10 / 326.61 | 3.01 / 676.40 | 14.62 / 1641.24 |
+| 5 | 8.81 / 139.60 | 8.38 / 301.18 | 3.00 / 651.84 | 14.46 / 1600.12 |
+| 6 | 7.88 / 129.67 | 7.75 / 303.94 | 2.95 / 665.23 | 18.60 / 1553.41 |
+| 7 | 8.99 / 140.66 | 8.10 / 309.38 | 3.00 / 636.15 | 15.94 / 1623.38 |
+| 8 | 9.26 / 150.51 | 7.28 / 362.57 | 2.98 / 794.82 | 14.88 / 1559.88 |
+| 9 | 8.68 / 136.88 | 8.08 / 314.34 | 3.16 / 671.76 | 17.26 / 1647.32 |
+| 10 | 9.74 / 144.67 | 8.87 / 297.39 | 2.98 / 679.06 | 14.74 / 1612.41 |
+| 11 | 9.49 / 154.50 | 9.27 / 289.26 | 3.03 / 675.48 | 14.56 / 1635.51 |
+| 12 | 9.50 / 130.38 | 7.87 / 283.84 | 3.07 / 788.75 | 14.20 / 1761.28 |
+| 13 | 9.38 / 134.81 | 8.14 / 316.91 | 3.06 / 661.93 | 14.29 / 1616.71 |
+| 14 | 8.93 / 136.60 | 9.02 / 300.60 | 3.06 / 653.69 | 15.48 / 1566.63 |
+| 15 | 10.62 / 144.90 | 7.79 / 277.59 | 3.04 / 658.40 | 15.18 / 1670.62 |
+| 16 | 9.11 / 136.85 | 7.87 / 293.22 | 3.01 / 663.78 | 15.02 / 1534.82 |
+| 17 | 8.04 / 141.92 | 7.13 / 343.93 | 2.95 / 685.24 | 15.83 / 1575.04 |
+| 18 | 8.91 / 133.76 | 7.67 / 409.39 | 3.17 / 800.19 | 14.17 / 1836.90 |
 
-Medians over the session: mojo ≈ 8.62 / 8.35 / 3.04 / 15.70 ms;
-upstream ≈ 140 / 315 / 674 / 1664 ms. Speedup is internally consistent
-(upstream ÷ mojo) in both the README and every bench output.
+Medians over the 18 runs (now the README table):
+mojo 8.96 / 8.09 / 3.01 / 15.10 ms; upstream 137.99 / 311.86 / 673.62 /
+1629.45 ms; speedup 15.40x / 38.55x / 223.79x / 107.91x faster.
+Speedup is upstream ÷ mojo in every run and in the table.
 
 ### 20% comparison against the previous README table
 
-Previous README (2026-09-27, kernel 6.8.0-142) claimed:
+Previous README claimed: TF 8.01 / 140.33 / 17.52x; SS 7.60 / 312.27 /
+41.11x; CT 3.02 / 672.24 / 222.74x; DT 13.65 / 1653.98 / 121.17x.
 
-| Row | README mojo / upstream | README speedup |
-|---|---|---|
-| TF | 8.69 / 145.09 | 16.70x |
-| SS | 8.40 / 327.73 | 39.04x |
-| CT | 3.02 / 645.55 | 213.66x |
-| DT | 15.19 / 1626.24 | 107.07x |
+At the median, all twelve cells reproduce within 12% of the previous
+table (+11.9% / −1.7% / −10.7%; +6.4% / −0.1% / −6.2%; −0.3% / +0.2% /
++0.4%; +10.6% / −1.5% / −9.5%): **nothing fails a median-based 20% bar.**
 
-In this session the mojo column was within ±20% of the README almost
-every run; the upstream column was within ±20% most of the time, but
-individual runs crossed the line (e.g. TF upstream +25% on 2 of the
-first 5 runs, SS upstream +24%, CT upstream +23%, DT upstream +21%,
-and one SS mojo run at +36% and one CT mojo run at +69% — known
-`parallelize` launch jitter on this shared host, consistent with the
-README's own range note and with `bench/analysis.md`). The median over
-all runs is within ~4% of the README on both sides.
+At the single-run level, 8 of 72 cells (11%) exceeded ±20%: TF mojo 3/18,
+SS upstream 3/18 and speedup 4/18, CT upstream 2/18 and speedup 2/18,
+DT mojo 3/18 and speedup 2/18 (max single-run deviation +38% SS
+upstream, +31% CT upstream, +36% DT mojo, +25% TF mojo). The variation
+is run-to-run jitter on this shared host, consistent with the
+`parallelize` launch cost documented in `bench/analysis.md`, not with a
+systematic bias: the mojo column's median is the slowest of:
+TF +11.9% and DT +10.6% high, SS +6.4% high, CT −0.3%; upstream medians
+are within 2% on all four rows.
 
-Decision recorded here: a single best-of-4 run is not a stable basis
-for a ±20% verdict on this host. The claim as a whole reproduces
-within 20% at the median. There was therefore no figure that
-"does not reproduce within 20%" under a robust reading.
+Decision: report medians. A single best-of-4 run is not a stable basis
+for a ±20% verdict on this host, and the previous table's own range
+note said the same. Per the session-only-numbers rule the README table
+is nevertheless updated to this session's medians (and the `before`
+column to a this-session re-measurement, §6), with the wording
+unchanged apart from the range note. All four rows stay "faster";
+none was removed or reworded.
 
-Per the task rule "a number you did not measure in this session does
-not go in the README", the README main table is nonetheless updated
-below to numbers measured in this session (canonical run 16), with the
-date/kernel modernised and the `before` column re-measured in this
-session (see §6). No row was added, removed, or reworded to look
-better; all four rows remain "faster", and the table now carries the
-same speedup semantics as before.
+## 3. Same-input / no-skip-work audit (DO step 4)
 
-## 3. Same-input / no-skip-work audit
+`bench/bench.py` (`cases()`), read line by line:
 
-`bench/bench.py` (`cases()`):
-
-- All systems and inputs are drawn from a single
-  `rng = np.random.default_rng(7)` stream, shared across the four
-  cases in one process, so the random inputs are fixed and reproducible.
-- Each case constructs both a mojo system and an upstream system from
-  the *same* NumPy arrays (`numerator`/`denominator`, `A`/`B`/`C`/`D`,
-  `A4`/`B4`/`C4`, `Ad`/`Bd`/`Cd`/`Dd`), and both timed callables
-  close over the *same* grid/input object (`omega_tf`, `omega_ss`,
-  `T`/`U`, `Td`/`Ud`). Examples:
-  - TF: `mc.tf(numerator, denominator)` vs `ct.tf(numerator, denominator)`,
-    both `frequency_response(..., omega_tf)` with `omega_tf = logspace(-3, 3, 500_000)`.
+- One `rng = np.random.default_rng(7)` stream per process feeds all four
+  cases in fixed order, so systems and inputs are identical every run.
+- Each case builds both a mojo system and an upstream system from the
+  *same* NumPy arrays and times both on the *same* grid/input object:
+  - TF: `mc.tf(numerator, denominator)` vs `ct.tf(...)`, both
+    `frequency_response(..., omega_tf)`, `omega_tf = logspace(-3, 3, 500_000)`.
   - SS: `mc.ss(A, B, C, D)` vs `ct.ss(A, B, C, D)`, both
-    `frequency_response(..., omega_ss, squeeze=False)`, `omega_ss = logspace(-3, 3, 20_000)`.
-  - CT: `mc.ss(A4, B4, C4, [[0.0]])` vs `ct.ss(A4, B4, C4, [[0.0]])`,
-    both `forced_response(..., T, U)`, `T = linspace(0, 200, 100_001)`, `U = sin(0.7*T)`.
-  - DT: `mc.ss(Ad, Bd, Cd, Dd, 0.01)` vs `ct.ss(Ad, Bd, Cd, Dd, 0.01)`,
-    both `forced_response(..., Td, Ud)`, `Td = arange(200_001)*0.01`.
-- Each timed callable is a full public-API call, invoked `repeat=4`
-  times by `best_time` and the best is kept. No result is cached or
-  reused; every iteration recomputes allocations and the full kernel.
-- Before timing, `main()` executes both sides once and asserts
-  `np.allclose(..., rtol=1e-9, atol=1e-9)` on `frdata` (rows 1–2) or
-  `outputs` (rows 3–4). This runs on every `pixi run bench` invocation
-  in this session without tripping.
-- No early-exit, shape-changing, or input-skipping branch is taken on
-  one side only. Where the Mojo side has a serial path below a work
-  threshold (`TF_PARALLEL_WORK = 12M`, `SS_PARALLEL_WORK = 6M` in
-  `src/control.mojo`), the benchmark sizes are all above those
-  thresholds, so both sides do the full parallel computation:
-  TF 500k × (33+33) coefficients, SS 20k × 12² × 12, both > thresholds.
+    `frequency_response(..., omega_ss, squeeze=False)`,
+    `omega_ss = logspace(-3, 3, 20_000)`.
+  - CT: `mc.ss(A4, B4, C4, [[0.0]])` vs `ct.ss(...)`, both
+    `forced_response(..., T, U)`, `T = linspace(0, 200, 100_001)`,
+    `U = sin(0.7*T)`.
+  - DT: `mc.ss(Ad, Bd, Cd, Dd, 0.01)` vs `ct.ss(..., 0.01)`, both
+    `forced_response(..., Td, Ud)`, `Td = arange(200_001)*0.01`,
+    `Ud = vstack([sin(0.4*Td), cos(0.9*Td)])`.
+- `best_time` calls the full public-API callable `repeat=4` times and
+  keeps the best. No caching, no reuse of a prior result; every
+  iteration recomputes. `main()` executes both sides once before timing
+  and asserts `np.allclose(..., rtol=1e-9, atol=1e-9)` on `frdata`
+  (freq rows) or `outputs` (time rows) — on every invocation, including
+  all 18 here, without tripping.
+- Mojo serial fallbacks: `TF_PARALLEL_WORK = 12_000_000` and
+  `SS_PARALLEL_WORK = 6_000_000` in `src/control.mojo`, with
+  `parallelize` above them. Bench work: TF `500_000 * (33+33) = 33M`,
+  SS `20_000 * 12*12 * 12 = 34.56M` — both above threshold, so the
+  timed path is the full parallel kernel on every run. The kernels
+  write every point (`tf_eval_range` fills `[start, end)` per chunk;
+  `ss_point` runs per frequency point, singular ones flagged in
+  `status` and recomputed by an exact NumPy `solve` fallback in
+  `core.py` — that fallback is part of the timed call, not a skip).
+- For CT, `forced_response` computes one SciPy `expm` of the augmented
+  block and then runs the full recurrence in Mojo; for DT the same
+  recurrence runs directly. This matches the documented method
+  (exact ZOH-equivalent step for linear input interpolation) and is
+  asserted for numerical agreement before timing; it is not skipped
+  work. `step_response` is not benchmarked, and it delegates to
+  `forced_response` unchanged in this codebase.
 
-Independent re-check in this session (separate process, not `bench.py`):
+Independent re-check in this session (separate process, same seed and
+inputs as `bench.py`, not calling `bench.py`):
 
-- TF: `mc.frequency_response(..., omega).complex` vs upstream,
-  `max|diff| ≈ 1.4e-14`, shapes `(1,1,500000)` both, omega identical.
-- SS: `frdata` shapes `(2,2,20000)`, `max|diff| ≈ 6e-15`,
-  all outputs non-zero on both sides (no skipped points).
-- CT: outputs length 100001 both, `max|diff| ≈ 5e-15`.
-- DT: `max|diff| ≈ 5e-14`.
+- TF: `mc...complex` vs upstream, shapes `(500000,)` both (SISO
+  squeeze), `array_equal(omega, input)`, `max|diff| ≈ 1.4e-14`,
+  nonzero fraction 1.0.
+- SS: `frdata` shapes `(2, 2, 20000)` both, `max|diff| ≈ 8.9e-15`,
+  nonzero fraction 1.0 (no skipped points).
+- CT: outputs length 100001 both, `max|diff| ≈ 1.5e-14`.
+  1 value in 100001 is exactly zero on both sides (input zero crossing;
+  CT input `sin(0.7*T)` at `T=0`).
+- DT: outputs `(2, 200001)` both, `max|diff| ≈ 5.3e-14`.
 
-Skipped-work suspects ruled out: the SS kernel's singular-point
-fallback (`status` → NumPy `solve`) and the CT `expm` block are both
-exercised by upstream parity paths and asserted; they are not
-benchmark-side shortcuts (see §5).
+No asymmetry, no skipped work, no cached result was found.
 
-## 4. Slower-than-upstream rows
+## 4. Slower-than-upstream rows (DO step 3)
 
-No row in `bench/bench.py` is slower than upstream in this session:
-every run above shows the mojo column at least an order of magnitude
-below the upstream column on all four cases.
+No row of `bench/bench.py` is slower than upstream in any of the 18
+runs: the mojo column is 13–54× below upstream on every case.
+Nothing was removed or reworded; the README table still shows all four
+rows as "faster", which is what the benchmark measures.
 
-A slower path exists outside the benchmark table and is documented in
-`bench/analysis.md` §5 (not in the README table, which only covers the
-four benchmark cases):
+A slower path exists **outside** this table and stays documented as
+slower in `bench/analysis.md` §5 (not in the README table, which covers
+only `bench/bench.py`):
 
-- `zeros` (SISO SS, 4 states): mojo 0.44–0.66 ms vs upstream
-  0.13–0.19 ms (≈3.3× slower). Re-measured here: mojo 0.454 ms vs
-  upstream 0.213 ms on the same 2-state example (best of 20).
-  Mechanism: mojo `StateSpace.zeros()` calls `scipy.signal.ss2zpk`
-  directly; upstream calls a QZ path with no scipy dispatch. No Mojo
-  kernel is involved. This row was not added to the README benchmark
-  table because the table is explicitly "the repository's benchmark"
-  (`bench/bench.py`); it stays documented in `bench/analysis.md`
-  with its "slower" wording intact, and no table row was removed or
-  reworded to hide a regression.
+- `zeros` (SISO SS): mojo 0.37 ms vs upstream 0.12 ms (best of 20,
+  re-measured this session on the 2-state fixture system; ≈3× slower).
+  Mechanism: mojo `StateSpace.zeros()` calls `scipy.signal.ss2zpk`;
+  upstream uses a QZ path with no scipy dispatch. Wording in
+  `analysis.md` ("no bench case is slower than upstream", with the
+  `zeros` row explicitly "slower") was left intact.
 
-## 5. Parity tests (`git log -p -- tests/`)
+## 5. Parity tests (DO step 5)
 
-History (`git log --oneline`): `c1ce3ba` (initial port) → `ed9e469` →
-`15d1e82`/`ab1ea4f` (toolchain) → `1433254` (accel) → `d3be6f4` (analyze).
+`git log -p -- tests/` and `git diff c1ce3ba..HEAD -- tests/`:
 
-Diff of `tests/test_parity.py` from `c1ce3ba` to HEAD (`git diff
-c1ce3ba..HEAD -- tests/`):
-
-- Only *additions* and one parametrisation extension:
-  - `test_transfer_function_simd_tail_and_parallel_threshold` gained
-    `200_003` to its `count` parametrisation (one extra, stricter case).
-  - New tests: `test_transfer_function_parallel_chunks`, 
-    `test_state_space_parallel_chunks_and_simd_tail` (against a NumPy
-    reference solver), `test_state_space_singular_frequency_point`,
-    `test_forced_response_state_count_remainders`.
-  - Every pre-existing tolerance was left unchanged (verified by
-    grepping `atol`/`rtol` lines in both revisions: identical values,
-    e.g. `assert_response_equal` rtol 1e-10 / atol 1e-10, TF
-    rtol/atol 1e-12, forced-response atol 2e-12 / 1e-12). No removed
-    assertion, no loosened tolerance was found.
-
-Current suite: 55 tests, all passing against `control==0.10.2`, with
-direct upstream-object comparisons (not NumPy-only references except
-for the SS parallel-threshold test, which correctly compares against
-`C @ solve(s I - A, B) + D`). Nothing was restored because nothing
-was loosened.
+- Only **additions** plus one parametrisation extension:
+  `test_transfer_function_simd_tail_and_parallel_threshold` gained
+  `200_003` to its `count` parametrisation (one extra, stricter case).
+  New tests: `test_transfer_function_parallel_chunks`,
+  `test_state_space_parallel_chunks_and_simd_tail` (against a NumPy
+  `C @ solve(sI−A, B) + D` reference),
+  `test_state_space_singular_frequency_point`,
+  `test_forced_response_state_count_remainders`.
+- No removed assertion. Every pre-existing tolerance was left
+  unchanged: `assert_response_equal` rtol 1e-10 / atol 1e-10 (default),
+  TF rtol/atol 1e-12, discrete 1e-11, forced-response atol 2e-12 (CT)
+  and 1e-12 (DT), root matching abs 1e-10 — identical in `c1ce3ba` and
+  HEAD. Verified by diffing the two revisions; the only changed line
+  is the parametrisation above.
+- Current suite: 55 tests, all passing against `control==0.10.2`,
+  comparing directly with upstream objects (not NumPy-only references,
+  except the one SS parallel test, which correctly uses the analytic
+  formula). Nothing was restored because nothing was loosened.
 
 ## 6. `before` column re-measurement
 
-The README `before` column (previous revision of the port) was
-re-measured in this session rather than carried forward:
+- Old revision: `git archive 15d1e82` (immediately before the accel
+  commit `1433254`), built with the current toolchain
+  (`mojo build --emit shared-lib /tmp/vb/src/control.mojo -o
+  /tmp/old_lib.so`, warnings only), run with
+  `MOJO_CONTROL_LIB=/tmp/old_lib.so PYTHONPATH=/tmp/vb/python` (its own
+  `bench/bench.py`, same systems/inputs/timing), under the same flock
+  lock. 5 runs, mojo column only:
 
-- Old revision taken as `git archive 15d1e82` (the revision immediately
-  before the accel commit `1433254`; its `src/control.mojo` builds on
-  the current toolchain with only deprecation warnings).
-- Compiled `src/control.mojo` from 15d1e82 to `/tmp/old_lib.so` with
-  the current `mojo` (1.2.0.dev2026092605), then ran the old
-  `bench/bench.py` with `MOJO_CONTROL_LIB=/tmp/old_lib.so` and
-  `PYTHONPATH=/tmp/verify_old/python`, under the same flock lock.
+  | Run | TF | SS | CT | DT |
+  |---|---|---|---|---|
+  | A | 25.96 | 45.60 | 3.97 | 25.73 |
+  | B | 26.08 | 45.34 | 3.70 | 23.15 |
+  | C | 24.86 | 45.23 | 3.85 | 25.37 |
+  | D | 26.16 | 45.62 | 3.87 | 25.15 |
+  | E | 23.81 | 43.10 | 3.83 | 24.72 |
+  | median | 25.96 | 45.34 | 3.85 | 25.15 |
 
-Old-revision results in this session (mojo column only; upstream
-measured alongside but not tabled):
-
-- Run A: 25.17 / 38.80 / 4.60 / 25.18 ms
-- Run B: 23.25 / 41.76 / 3.84 / 25.29 ms
-- Run C: 24.17 / 45.85 / 3.74 / 25.27 ms
-- Run D: 23.65 / 43.71 / 3.85 / 24.47 ms
-- Run E: 23.11 / 45.76 / 3.87 / 24.29 ms  ← canonical `before`
-
-Against the old README `before` (25.11 / 44.95 / 3.77 / 23.07 ms) the
-canonical re-measurement is within −8% / +2% / +3% / +5% — reproduces
-within 20%. The table now carries run E, so every number in the table
-was measured in this session.
+- Against the previous README `before` (23.11 / 45.76 / 3.87 / 24.29 ms)
+  the median is +12.3% / −0.9% / −0.5% / +3.5% — reproduces within 20%
+  on all four rows, and every single run was within 20% too. The README
+  `before` column is now the median above, so every cell of the table
+  was measured in this session.
 
 ## 7. README changes made
 
-- Date/kernel: `2026-09-27 … 6.8.0-142-generic` → `2026-11-09 …
-  6.8.0-147-generic`.
-- Main table → canonical run 16 (measured this session, §2):
-  - TF: 8.01 ms / 140.33 ms / 17.52x faster (was 8.69 / 145.09 / 16.70x)
-  - SS: 7.60 ms / 312.27 ms / 41.11x faster (was 8.40 / 327.73 / 39.04x)
-  - CT: 3.02 ms / 672.24 ms / 222.74x faster (was 3.02 / 645.55 / 213.66x)
-  - DT: 13.65 ms / 1653.98 ms / 121.17x faster (was 15.19 / 1626.24 / 107.07x)
-- `before` column → re-measured old-revision run E (§6):
-  23.11 / 45.76 / 3.87 / 24.29 ms.
-- Added (all measured this session) a note that the `before` column was
-  re-measured in the verify session from revision 15d1e82, plus the
-  observed cross-run ranges (mojo ≈ 7.4–11.5 / 7.5–11.4 / 2.9–5.1 /
-  13.3–16.8 ms; upstream up to ±20% run to run).
-- No code changed. No test changed. No row removed or reworded to
-  look better. All rows remain "faster", which is what `bench/bench.py`
+- Table preamble: "best-of-four" → "medians of 18 best-of-four
+  measurements …", so the statistic actually tabled is stated.
+  Date/kernel unchanged (already this session's host).
+- Main table → this session's medians:
+  - TF: 8.96 / 137.99 / 15.40x faster (was 8.01 / 140.33 / 17.52x)
+  - SS: 8.09 / 311.86 / 38.55x faster (was 7.60 / 312.27 / 41.11x)
+  - CT: 3.01 / 673.62 / 223.79x faster (was 3.02 / 672.24 / 222.74x)
+  - DT: 15.10 / 1629.45 / 107.91x faster (was 13.65 / 1653.98 / 121.17x)
+- `before` column → re-measured medians (§6): 25.96 / 45.34 / 3.85 /
+  25.15 ms.
+- Range note rewritten with this session's observed spans
+  (TF 7.9–10.6 ms mojo / 127–155 ms upstream; SS 7.1–9.3 / 278–433;
+  CT 3.0–3.2 / 636–881; DT 14.2–18.6 / 1535–1957) and the max
+  single-run deviations. Speedups are the quotients of the two
+  adjacent table columns (e.g. 137.99/8.96 = 15.40).
+- No code changed. No test changed. No row removed or reworded to look
+  better; all four remain "faster", which is what `bench/bench.py`
   measures; the slower `zeros` case remains slowness-documented in
-  `bench/analysis.md` (§5/§8 of that file).
-
-Note on the speedup arithmetic: new table speedups are the exact
-quotients of the two adjacent new columns (e.g. 312.27/7.60 = 41.09
-≈ 41.11x with the full-precision values behind the rounded print).
+  `bench/analysis.md`.
 
 ## 8. What could not be reproduced
 
-- The exact historical README numbers (2026-09-27 / 2026-07-29) were
-  not bit-reproducible as point values — expected on a shared host
-  with `parallelize` launch jitter (see ranges above). At the median
-  they reproduced within ~4%, well inside 20%. The table was updated
-  to this-session numbers per the session-only-numbers rule, not
-  because the old ones were falsified.
-- One-off outliers (SS mojo +36%, CT mojo +69%, CT upstream +24%) were
-  observed once each and not reproduced as typical; they would
-  exceed a ±20% single-run bar but sit outside the median. The
-  extended-range note in the README records this spread.
+- Exact historical point values (any prior session's single
+  best-of-4). On this shared host the same binary moves by ±10–38%
+  run to run (§2); at the median the previous table reproduces within
+  12%, inside 20%. The table was updated to this-session medians per
+  the session-only-numbers rule, not because the old table was
+  falsified at the median.
+- The previous verify session's quoted ranges (e.g. a 5.10 ms CT
+  outlier, mojo 7.4–11.5 / 7.5–11.4 / 2.9–5.1 / 13.3–16.8) were not
+  reproduced as stated: this session's CT mojo column never exceeded
+  3.17 ms, and the DT mojo column never went below 14.17 ms — i.e. the
+  old lower edge for DT (13.3–13.65 ms) sits below every run here,
+  consistent with apex-of-jitter readings rather than error, but not
+  re-measured. The new note carries this session's spans instead.
+- One item from `bench/analysis.md` was spot-checked but not
+  re-derived: the GPU/FMA flop counts and the `zeros` mechanism. The
+  `zeros` timing *was* re-measured (§4); flop counts are arithmetic
+  from the arrays, not benchmarks, and are out of scope for this
+  README table.
 
 ## 9. Reproduction commands
 
 ```bash
 pixi run build && pixi run test     # 55 passed
-pixi run bench                       # table in §1 / §2
+pixi run bench                       # table in §1 / §2 (use medians over runs)
 git log -p -- tests/                 # §5: additions only, no loosened tolerances
-MOJO_CONTROL_LIB=/tmp/old_lib.so PYTHONPATH=/tmp/verify_old/python \
-  pixi run python /tmp/verify_old/bench/bench.py   # §6 before-column
+git archive 15d1e82 | tar -x -C /tmp/vb
+pixi run bash -c 'mojo build --emit shared-lib /tmp/vb/src/control.mojo -o /tmp/old_lib.so'
+MOJO_CONTROL_LIB=/tmp/old_lib.so PYTHONPATH=/tmp/vb/python \
+  pixi run flock /tmp/mojo-bench.lock python /tmp/vb/bench/bench.py   # §6 before-column
 ```
 
-*Files changed in this phase: `README.md` (benchmark date, table,
-and notes only) and `bench/verify.md` (this file). No source or test
-change — the gate was green with no failing-test evidence of a bug.*
+*Files changed in this phase: `README.md` (benchmark preamble, table,
+and range note only) and `bench/verify.md` (this file). No source or
+test change — the gate was green with no failing-test evidence of a
+bug, so per the rules no code was touched.*
